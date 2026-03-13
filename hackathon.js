@@ -5,6 +5,9 @@ const OPENROUTER_MODEL = 'stepfun/step-3.5-flash:free';
 const OPENROUTER_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
 const MAX_TOKENS = 4096;
 
+// ===== 탭 ID 목록 (단일 소스) =====
+const TAB_IDS = ['summary', 'concepts', 'document', 'diagram', 'steps', 'design'];
+
 // ===== 각 탭별 프롬프트 =====
 // summary는 메모 유형(meeting/learning/idea)에 따라 분기되는 객체 구조
 // 나머지 탭은 유형 무관하게 동일한 프롬프트 사용
@@ -91,7 +94,8 @@ const state = {
   memoType: 'meeting',
   results: { summary: '', concepts: '', document: '', diagram: '', steps: '', design: '' },
   loading: false,
-  activeTab: 'summary'
+  activeTab: 'summary',
+  abortController: null
 };
 
 // ===== 초기화 =====
@@ -138,6 +142,13 @@ function loadApiKey() {
   }
 }
 
+// API 키 유효성 검증. 오류 메시지 반환, 유효하면 null
+function validateApiKey(key) {
+  if (!key) return 'OpenRouter API 키를 먼저 입력하고 저장해 주세요. (sk-or-로 시작)';
+  if (!key.startsWith('sk-or-')) return '올바른 OpenRouter API 키가 아닙니다. (sk-or-로 시작해야 합니다)';
+  return null;
+}
+
 function showApiKeySaved() {
   $('api-key-saved').style.display = 'flex';
   $('api-key-row').style.display = 'none';
@@ -151,8 +162,8 @@ function showApiKeyInput() {
 
 function saveApiKey() {
   const key = $('api-key').value.trim();
-  if (!key) { showError('API 키를 입력해 주세요.'); return; }
-  if (!key.startsWith('sk-or-')) { showError('올바른 OpenRouter API 키 형식이 아닙니다. (sk-or-로 시작해야 합니다)'); return; }
+  const err = validateApiKey(key);
+  if (err) { showError(err); return; }
   state.apiKey = key;
   localStorage.setItem('memodoc_api_key', key);
   hideError();
@@ -188,7 +199,7 @@ function hideError() {
 // ===== 스트리밍 API 호출 (OpenRouter) =====
 // OpenAI 호환 SSE(Server-Sent Events) 방식으로 스트리밍 응답을 처리한다.
 // 각 탭은 독립적으로 이 함수를 호출하며, 응답이 오는 대로 화면에 즉시 렌더링한다.
-async function callClaudeStream(tabId, memo) {
+async function callClaudeStream(tabId, memo, signal) {
   // summary 탭은 메모 유형별로 다른 프롬프트를 사용, 나머지는 단일 프롬프트
   const raw = PROMPTS[tabId];
   const prompt = (tabId === 'summary' && typeof raw === 'object')
@@ -227,7 +238,8 @@ async function callClaudeStream(tabId, memo) {
           { role: 'system', content: prompt },
           { role: 'user', content: `다음 업무 메모를 분석해 주세요:\n\n${memo}` }
         ]
-      })
+      }),
+      signal
     });
 
     // HTTP 오류 시 응답 본문에서 상세 메시지 추출
@@ -267,7 +279,7 @@ async function callClaudeStream(tabId, memo) {
           outputEl.innerHTML = '<span class="cursor"></span>';
           renderMarkdown(outputEl, fullText + ' ▌');
         } else {
-          outputEl.innerHTML = marked.parse(fullText + ' ▌');
+          renderMarkdown(outputEl, fullText + ' ▌');
         }
       }
     }
@@ -279,10 +291,11 @@ async function callClaudeStream(tabId, memo) {
       outputEl.innerHTML = '';
       await renderDiagram(outputEl, fullText); // Mermaid SVG 렌더링
     } else {
-      outputEl.innerHTML = marked.parse(fullText);
+      renderMarkdown(outputEl, fullText);
     }
 
   } catch (err) {
+    if (err.name === 'AbortError') return; // 취소된 요청은 무시
     // 오류 발생 시 탭 내부에 재시도 버튼과 함께 오류 메시지 표시
     outputEl.innerHTML = `
       <div style="color:var(--error);padding:12px;background:var(--error-bg);border-radius:8px;display:flex;flex-direction:column;gap:10px;">
@@ -297,6 +310,8 @@ async function callClaudeStream(tabId, memo) {
 async function retrySingleTab(tabId) {
   const memo = $('memo').value.trim();
   if (!memo) { showError('메모를 먼저 입력해 주세요.'); return; }
+  const keyErr = validateApiKey(state.apiKey);
+  if (keyErr) { showError(keyErr); return; }
   try {
     await callClaudeStream(tabId, memo);
   } catch {}
@@ -371,25 +386,39 @@ function escapeHtml(str) {
   return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
+// ===== 적응형 딜레이 =====
+// API 응답 시간이 길면 rate limit 가능성이 낮으므로 대기 시간 단축
+// 최소 1초 보장, rate limit 오류 시 5초로 증가
+function adaptiveDelay(tabDurationMs, hasRateLimit) {
+  if (hasRateLimit) return 5000;
+  return Math.max(1000, 3000 - tabDurationMs);
+}
+
 // ===== 문서 생성 (전체 탭) =====
 async function generate() {
+  if (state.loading) return; // 동시 실행 방지
+
   const memo = $('memo').value.trim();
   if (!memo) { showError('메모를 입력해 주세요.'); return; }
   if (memo.length < 10) { showError('메모가 너무 짧아요. 내용을 좀 더 입력해 주세요.'); return; }
 
-  const key = $('api-key').value.trim();
-  if (!key) { showError('OpenRouter API 키를 먼저 입력하고 저장해 주세요. (sk-or-로 시작)'); return; }
-  if (!key.startsWith('sk-or-')) { showError('올바른 OpenRouter API 키가 아닙니다. (sk-or-로 시작해야 합니다)'); return; }
+  const key = $('api-key').value.trim() || state.apiKey;
+  const keyErr = validateApiKey(key);
+  if (keyErr) { showError(keyErr); return; }
   state.apiKey = key;
 
   hideError();
+
+  // 이전 생성 취소 후 새 AbortController 생성
+  if (state.abortController) state.abortController.abort();
+  state.abortController = new AbortController();
+  const { signal } = state.abortController;
+
   state.loading = true;
   $('btn-generate').disabled = true;
 
-  const tabIds = ['summary', 'concepts', 'document', 'diagram', 'steps', 'design'];
-
   // 모든 탭 대기 상태로 초기화
-  tabIds.forEach(id => {
+  TAB_IDS.forEach(id => {
     $(`pane-${id}`).innerHTML = `
       <div class="output-body" style="display:flex;align-items:center;gap:12px;color:var(--text-2);">
         <span style="font-size:1.1rem;">⏳</span>
@@ -402,18 +431,33 @@ async function generate() {
   // 탭 순차 생성 (무료 모델 rate limit 대응)
   const delay = ms => new Promise(r => setTimeout(r, ms));
   let hasError = false;
-  for (let i = 0; i < tabIds.length; i++) {
-    const id = tabIds[i];
-    $('btn-generate').innerHTML = `<div class="spinner"></div> 생성 중... (${i + 1}/${tabIds.length})`;
+  const perfLog = {};
+
+  for (let i = 0; i < TAB_IDS.length; i++) {
+    if (signal.aborted) break;
+    const id = TAB_IDS[i];
+    $('btn-generate').innerHTML = `<div class="spinner"></div> 생성 중... (${i + 1}/${TAB_IDS.length})`;
+    const tabStart = performance.now();
+    let tabHasRateLimit = false;
     try {
-      await callClaudeStream(id, memo);
-      if (i < tabIds.length - 1) await delay(3000);
-    } catch {
+      await callClaudeStream(id, memo, signal);
+    } catch (err) {
+      if (signal.aborted) break;
       hasError = true;
+      if (err.message && err.message.toLowerCase().includes('rate')) tabHasRateLimit = true;
     }
+    const tabDuration = performance.now() - tabStart;
+    perfLog[id] = tabDuration;
+    console.log(`[MemoDoc] ${id}: ${(tabDuration / 1000).toFixed(1)}s`);
+
+    if (i < TAB_IDS.length - 1) await delay(adaptiveDelay(tabDuration, tabHasRateLimit));
   }
 
-  if (hasError) showError('일부 탭에서 오류가 발생했습니다. 해당 탭의 🔄 다시 시도 버튼을 눌러주세요.');
+  console.log('[MemoDoc] 탭별 소요 시간(ms):', perfLog);
+
+  if (!signal.aborted && hasError) {
+    showError('일부 탭에서 오류가 발생했습니다. 해당 탭의 🔄 다시 시도 버튼을 눌러주세요.');
+  }
 
   state.loading = false;
   $('btn-generate').disabled = false;
@@ -455,8 +499,7 @@ function exportAll() {
   if (!hasContent) { alert('아직 생성된 문서가 없습니다.'); return; }
 
   const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-  const tabs = ['summary','concepts','document','diagram','steps','design'];
-  const content = tabs
+  const content = TAB_IDS
     .filter(id => state.results[id])
     .map(id => `# ${getTabLabel(id)}\n\n${state.results[id]}`)
     .join('\n\n---\n\n');
@@ -481,6 +524,8 @@ function setupEventListeners() {
   $('btn-theme').addEventListener('click', toggleTheme);
   $('btn-clear').addEventListener('click', () => {
     if ($('memo').value && confirm('메모를 초기화할까요?')) {
+      // 진행 중인 생성 요청 취소
+      if (state.abortController) state.abortController.abort();
       $('memo').value = '';
       updateCharCount();
       hideError();
