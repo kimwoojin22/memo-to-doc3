@@ -88,13 +88,16 @@ Ctrl+Enter로 바로 생성할 수 있습니다."
 
       <div id="error-box" class="error-box"></div>
 
-      <button class="btn-generate" id="btn-generate">
-        ✨ 문서 생성
-      </button>
+      <div style="display:flex;gap:8px;">
+        <button class="btn-generate" id="btn-generate">
+          ✨ 문서 생성
+        </button>
+        <button class="btn-icon" id="btn-clear" title="메모 초기화">🗑</button>
+      </div>
 
       <div style="font-size:0.78rem;color:var(--text-2);line-height:1.5;">
         💡 API 키는 브라우저 로컬에만 저장되며 외부로 전송되지 않습니다.<br>
-        OpenRouter 무료 모델로 6가지 관점의 문서가 동시에 생성됩니다.
+        모델: <span id="model-name" style="font-family:monospace;"></span> | Ctrl+Enter로 바로 생성
       </div>
 
     </div>

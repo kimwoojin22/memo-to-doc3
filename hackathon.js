@@ -100,6 +100,7 @@ function init() {
   loadApiKey();
   setupEventListeners();
   updateCharCount();
+  $('model-name').textContent = OPENROUTER_MODEL;
 }
 
 // ===== 테마 =====
@@ -478,6 +479,13 @@ function getTabLabel(tabId) {
 // ===== 이벤트 리스너 =====
 function setupEventListeners() {
   $('btn-theme').addEventListener('click', toggleTheme);
+  $('btn-clear').addEventListener('click', () => {
+    if ($('memo').value && confirm('메모를 초기화할까요?')) {
+      $('memo').value = '';
+      updateCharCount();
+      hideError();
+    }
+  });
   $('btn-save-key').addEventListener('click', saveApiKey);
   $('btn-change-key').addEventListener('click', showApiKeyInput);
   $('btn-generate').addEventListener('click', generate);
