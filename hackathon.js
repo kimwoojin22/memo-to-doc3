@@ -251,26 +251,17 @@ async function callClaudeStream(tabId, memo) {
       buffer = lines.pop();
 
       for (const line of lines) {
-        if (!line.startsWith('data: ')) continue; // SSE 형식: "data: {json}"
-        const data = line.slice(6).trim();
-        if (!data || data === '[DONE]') continue;  // 스트림 종료 신호 무시
+        const text = parseSSELine(line);
+        if (!text) continue;
 
-        try {
-          // OpenAI 호환 형식: choices[0].delta.content 에 텍스트 조각이 담김
-          const evt = JSON.parse(data);
-          const text = evt.choices?.[0]?.delta?.content;
-          if (text) {
-            fullText += text;
-
-            // 도식화 탭: 스트리밍 중에는 마크다운으로 미리보기, 완료 후 Mermaid 렌더링
-            if (tabId === 'diagram') {
-              outputEl.innerHTML = '<span class="cursor"></span>';
-              renderMarkdown(outputEl, fullText + ' ▌');
-            } else {
-              outputEl.innerHTML = marked.parse(fullText + ' ▌');
-            }
-          }
-        } catch {} // JSON 파싱 실패 시 해당 청크 무시하고 계속
+        fullText += text;
+        // 도식화 탭: 스트리밍 중에는 마크다운으로 미리보기, 완료 후 Mermaid 렌더링
+        if (tabId === 'diagram') {
+          outputEl.innerHTML = '<span class="cursor"></span>';
+          renderMarkdown(outputEl, fullText + ' ▌');
+        } else {
+          outputEl.innerHTML = marked.parse(fullText + ' ▌');
+        }
       }
     }
 
@@ -302,6 +293,21 @@ async function retrySingleTab(tabId) {
   try {
     await callClaudeStream(tabId, memo);
   } catch {}
+}
+
+// ===== SSE 한 줄 파싱 =====
+// "data: {...}" 형식의 SSE 라인에서 텍스트 조각을 추출한다.
+// OpenAI 호환 형식: choices[0].delta.content
+function parseSSELine(line) {
+  if (!line.startsWith('data: ')) return null;
+  const data = line.slice(6).trim();
+  if (!data || data === '[DONE]') return null;
+  try {
+    const evt = JSON.parse(data);
+    return evt.choices?.[0]?.delta?.content || null;
+  } catch {
+    return null;
+  }
 }
 
 // ===== 마크다운 렌더링 =====
