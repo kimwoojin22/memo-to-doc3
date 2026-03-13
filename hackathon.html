@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MemoDoc - 업무 메모 → 지식 문서 자동 생성</title>
+  <link rel="stylesheet" href="hackathon.css">
+
+  <!-- Marked.js: 마크다운 렌더링 -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+  <!-- Mermaid.js: 다이어그램 렌더링 -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+  <script>
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: 'default',
+      securityLevel: 'loose'
+    });
+
+    // 다크모드에 맞게 Mermaid 테마 변경
+    const observer = new MutationObserver(() => {
+      const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+      mermaid.initialize({ startOnLoad: false, theme: isDark ? 'dark' : 'default', securityLevel: 'loose' });
+    });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  </script>
+</head>
+<body>
+
+  <!-- ===== 헤더 ===== -->
+  <header>
+    <div class="logo">
+      MemoDoc
+      <span>업무 메모 → 지식 문서</span>
+    </div>
+    <div class="spacer"></div>
+    <button class="btn-icon" id="btn-export-all">⬇ 전체 내보내기</button>
+    <button class="btn-icon" id="btn-theme">🌙 다크</button>
+  </header>
+
+  <!-- ===== 메인 ===== -->
+  <div class="main">
+
+    <!-- 왼쪽: 입력 패널 -->
+    <div class="input-panel">
+
+      <div class="panel-title">🔑 API 설정</div>
+
+      <!-- 저장된 상태 표시 -->
+      <div id="api-key-saved" style="display:none;align-items:center;gap:8px;">
+        <span style="font-size:0.85rem;color:var(--text-2);">✅ OpenRouter API 키 저장됨</span>
+        <button class="btn-sm" id="btn-change-key">변경</button>
+      </div>
+
+      <!-- 입력 폼 -->
+      <div class="api-key-row" id="api-key-row">
+        <input
+          type="password"
+          id="api-key"
+          placeholder="OpenRouter API Key (sk-or-...)"
+          autocomplete="off"
+        >
+        <button class="btn-sm" id="btn-save-key">저장</button>
+      </div>
+
+      <div class="panel-title">📝 업무 메모 입력</div>
+      <div class="memo-type-row">
+        <button class="btn-type active" data-type="meeting">🗂 회의/업무</button>
+        <button class="btn-type" data-type="learning">📚 교육/학습</button>
+        <button class="btn-type" data-type="idea">💡 아이디어</button>
+      </div>
+      <textarea
+        id="memo"
+        class="memo-area"
+        placeholder="회의 내용, 업무 메모, 학습 내용 등을 자유롭게 입력하세요.
+
+예시:
+- 오늘 회의: MSA 전환 논의
+- 3단계 계획: 도메인 분리 → API Gateway → 이벤트 버스
+- 첫 번째로 User 서비스 분리 결정
+- 담당: 백엔드팀, 기간: 6개월
+
+Ctrl+Enter로 바로 생성할 수 있습니다."
+        maxlength="10000"
+      ></textarea>
+      <div class="char-count" id="char-count">0 / 10,000자</div>
+
+      <div id="error-box" class="error-box"></div>
+
+      <button class="btn-generate" id="btn-generate">
+        ✨ 문서 생성
+      </button>
+
+      <div style="font-size:0.78rem;color:var(--text-2);line-height:1.5;">
+        💡 API 키는 브라우저 로컬에만 저장되며 외부로 전송되지 않습니다.<br>
+        OpenRouter 무료 모델로 6가지 관점의 문서가 동시에 생성됩니다.
+      </div>
+
+    </div>
+
+    <!-- 오른쪽: 출력 패널 -->
+    <div class="output-panel">
+
+      <!-- 탭 네비게이션 -->
+      <div class="tabs">
+        <button class="tab active" data-tab="summary">📋 요약</button>
+        <button class="tab" data-tab="concepts">💡 개념 정리</button>
+        <button class="tab" data-tab="document">📄 구조화 문서</button>
+        <button class="tab" data-tab="diagram">🔷 도식화</button>
+        <button class="tab" data-tab="steps">🪜 단계별 설명</button>
+        <button class="tab" data-tab="design">🏗 설계 활용</button>
+      </div>
+
+      <!-- 탭 콘텐츠 -->
+      <div class="tab-content">
+
+        <!-- 요약 탭 -->
+        <div id="pane-summary" class="tab-pane active">
+          <div class="empty-state">
+            <div class="icon">📋</div>
+            <h3>요약 문서가 여기에 표시됩니다</h3>
+            <p>왼쪽에 업무 메모를 입력하고<br><strong>문서 생성</strong> 버튼을 눌러주세요.</p>
+          </div>
+        </div>
+
+        <!-- 개념 정리 탭 -->
+        <div id="pane-concepts" class="tab-pane">
+          <div class="empty-state">
+            <div class="icon">💡</div>
+            <h3>개념 정리가 여기에 표시됩니다</h3>
+            <p>메모에 등장하는 주요 개념과 용어를<br>자동으로 정의와 함께 정리해 드립니다.</p>
+          </div>
+        </div>
+
+        <!-- 구조화 문서 탭 -->
+        <div id="pane-document" class="tab-pane">
+          <div class="empty-state">
+            <div class="icon">📄</div>
+            <h3>구조화 문서가 여기에 표시됩니다</h3>
+            <p>팀 위키나 Notion에 바로 사용할 수 있는<br>공식 문서 형태로 변환해 드립니다.</p>
+          </div>
+        </div>
+
+        <!-- 도식화 탭 -->
+        <div id="pane-diagram" class="tab-pane">
+          <div class="empty-state">
+            <div class="icon">🔷</div>
+            <h3>플로우차트가 여기에 표시됩니다</h3>
+            <p>메모의 프로세스와 흐름을<br>Mermaid 다이어그램으로 시각화합니다.</p>
+          </div>
+        </div>
+
+        <!-- 단계별 설명 탭 -->
+        <div id="pane-steps" class="tab-pane">
+          <div class="empty-state">
+            <div class="icon">🪜</div>
+            <h3>단계별 가이드가 여기에 표시됩니다</h3>
+            <p>메모의 내용을 누구나 따라할 수 있는<br>Step-by-step 형식으로 정리해 드립니다.</p>
+          </div>
+        </div>
+
+        <!-- 설계 활용 탭 -->
+        <div id="pane-design" class="tab-pane">
+          <div class="empty-state">
+            <div class="icon">🏗</div>
+            <h3>설계 활용 포인트가 여기에 표시됩니다</h3>
+            <p>이 메모가 향후 시스템 설계 시<br>어떻게 활용될 수 있는지 제시해 드립니다.</p>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+
+  <script src="hackathon.js"></script>
+</body>
+</html>
