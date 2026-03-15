@@ -338,25 +338,38 @@ function renderMarkdown(el, text) {
 }
 
 // ===== Mermaid 다이어그램 렌더링 =====
-// AI 응답에서 ```mermaid 블록을 추출해 SVG로 렌더링하고,
-// 나머지 설명 텍스트는 마크다운으로 별도 표시한다.
+// AI 응답 텍스트를 두 영역으로 분리해 렌더링한다:
+//   1. ```mermaid 블록 → mermaid.run()으로 SVG 변환
+//   2. 나머지 텍스트 → marked.parse()로 마크다운 렌더링
+//
+// 렌더링 흐름:
+//   텍스트 수신 → mermaid 블록 추출 → HTML 조립 → DOM 삽입 → mermaid.run() 호출
+//
+// 주의: mermaid.run()은 DOM에 삽입된 후 호출해야 하므로 innerHTML 할당 뒤에 실행
 async function renderDiagram(el, text) {
-  // ```mermaid ... ``` 블록에서 코드만 추출
+  // ── Step 1: ```mermaid ... ``` 블록 추출 ──────────────────────────────
+  // AI가 출력한 코드 펜스 내부의 Mermaid 소스만 분리
   const mermaidMatch = text.match(/```mermaid\n([\s\S]*?)```/);
   const mermaidCode = mermaidMatch ? mermaidMatch[1].trim() : null;
 
-  // Mermaid 블록을 제거한 나머지가 설명 텍스트
+  // ── Step 2: 설명 텍스트 분리 ──────────────────────────────────────────
+  // Mermaid 블록을 제거한 나머지(AI의 부가 설명)를 마크다운으로 표시
   const descText = text.replace(/```mermaid[\s\S]*?```/, '').trim();
 
+  // ── Step 3: HTML 조립 ─────────────────────────────────────────────────
   let html = '';
-  // renderId는 두 if 블록 모두에서 참조하므로 바깥에 선언 (블록 스코프 주의)
-  const renderId = 'mermaid-' + Date.now(); // 동일 페이지 내 고유 ID 보장
+  // renderId: mermaid.run()이 특정 DOM 노드를 타겟팅하는 데 필요한 고유 ID
+  // 두 번째 if 블록에서도 참조하므로 바깥에서 선언 (블록 스코프 회피)
+  const renderId = 'mermaid-' + Date.now();
 
   if (descText) {
+    // 설명 텍스트가 있으면 다이어그램 위에 마크다운으로 표시
     html += `<div class="output-body">${marked.parse(descText)}</div>`;
   }
 
   if (mermaidCode) {
+    // SVG 렌더링 영역 + 소스 코드 표시 영역을 나란히 배치
+    // mermaid 클래스가 붙은 div를 mermaid.run()이 감지해 SVG로 교체
     html += `
       <div class="mermaid-wrapper">
         <div class="mermaid-render">
@@ -369,12 +382,17 @@ async function renderDiagram(el, text) {
       </div>`;
   }
 
+  // ── Step 4: DOM 삽입 ──────────────────────────────────────────────────
+  // mermaid 블록도 설명도 없는 엣지 케이스는 원문을 마크다운으로 폴백 렌더링
   el.innerHTML = html || marked.parse(text);
 
+  // ── Step 5: Mermaid SVG 렌더링 ────────────────────────────────────────
+  // DOM 삽입 후 호출해야 mermaid.run()이 노드를 정상 탐색
   if (mermaidCode) {
     try {
       await mermaid.run({ nodes: [document.getElementById(renderId)] });
     } catch (e) {
+      // 문법 오류 등 렌더링 실패 시: 에러 메시지 + 소스 코드를 함께 표시
       document.getElementById(renderId).innerHTML =
         `<div style="color:var(--error);font-size:0.85rem;">다이어그램 렌더링 오류: ${e.message}</div>
          <pre style="text-align:left;font-size:0.8rem;margin-top:8px;">${escapeHtml(mermaidCode)}</pre>`;
