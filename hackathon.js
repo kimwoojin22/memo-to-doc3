@@ -454,7 +454,18 @@ async function generate() {
   for (let i = 0; i < TAB_IDS.length; i++) {
     if (signal.aborted) break;
     const id = TAB_IDS[i];
-    $('btn-generate').innerHTML = `<div class="spinner"></div> 생성 중... (${i + 1}/${TAB_IDS.length})`;
+
+    // 이전 탭 실측값 기반 예상 잔여 시간 계산
+    const completedDurations = Object.values(perfLog);
+    let timeHint = '';
+    if (completedDurations.length > 0) {
+      const avgMs = completedDurations.reduce((a, b) => a + b, 0) / completedDurations.length;
+      const remainingSec = Math.ceil(avgMs * (TAB_IDS.length - i) / 1000);
+      timeHint = remainingSec >= 60
+        ? ` — 약 ${Math.ceil(remainingSec / 60)}분 남음`
+        : ` — 약 ${remainingSec}초 남음`;
+    }
+    $('btn-generate').innerHTML = `<div class="spinner"></div> 생성 중... (${i + 1}/${TAB_IDS.length})${timeHint}`;
     const tabStart = performance.now();
     let tabHasRateLimit = false;
     try {
